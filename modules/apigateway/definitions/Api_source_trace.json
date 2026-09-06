@@ -1,0 +1,413 @@
+{
+  "openapi": "3.0.1",
+  "info": {
+    "title": "Source Trace API",
+    "description": "Invoca el análisis de código fuente (Step Function) y entrega URLs prefirmadas para subir el artefacto a S3.",
+    "version": "2026-09-05"
+  },
+  "servers": [
+    {
+      "url": "https://{apiId}.execute-api.{region}.amazonaws.com/{basePath}",
+      "variables": {
+        "apiId": {
+          "default": "xxxxxxxxxx"
+        },
+        "region": {
+          "default": "us-east-1"
+        },
+        "basePath": {
+          "default": "prod"
+        }
+      }
+    }
+  ],
+  "paths": {
+    "/V1/product/analysis/uploadUrl": {
+      "get": {
+        "summary": "Genera una URL prefirmada para subir el artefacto a S3",
+        "description": "El front usa la URL devuelta para hacer un PUT directo a S3 y luego envía el `artifactPath` resultante a `/V1/product/analysis/invoke` con `sourceType: UPLOAD`.",
+        "operationId": "createUploadUrl",
+        "parameters": [
+          {
+            "name": "fileName",
+            "in": "query",
+            "required": true,
+            "description": "Nombre del archivo. Se sanitiza (solo `A-Za-z0-9._-`, se toma el basename). Debe terminar en `.zip`, `.tar.gz` o `.tgz`.",
+            "schema": {
+              "type": "string",
+              "maxLength": 200,
+              "pattern": "\\.(zip|tar\\.gz|tgz)$"
+            },
+            "example": "repo.zip"
+          },
+          {
+            "name": "contentType",
+            "in": "query",
+            "required": false,
+            "description": "MIME type que el front enviará en el header `Content-Type` del PUT. Debe coincidir exactamente con el devuelto en `headers`.",
+            "schema": {
+              "type": "string",
+              "default": "application/octet-stream",
+              "enum": [
+                "application/zip",
+                "application/x-zip-compressed",
+                "application/gzip",
+                "application/x-gzip",
+                "application/x-tar",
+                "application/octet-stream"
+              ]
+            },
+            "example": "application/zip"
+          },
+          {
+            "name": "projectId",
+            "in": "query",
+            "required": false,
+            "description": "Identificador de proyecto; se incluye en el prefijo de la key de S3.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ticket de subida",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UploadTicket"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Query params inválidos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno (p. ej. `UPLOAD_BUCKET` sin configurar)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerError"
+                }
+              }
+            }
+          }
+        },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${lambda_arn}/invocations",
+          "httpMethod": "POST",
+          "responses": {
+            "default": {
+              "statusCode": "200"
+            }
+          },
+          "passthroughBehavior": "when_no_match",
+          "contentHandling": "CONVERT_TO_TEXT"
+        }
+      },
+      "options": {
+        "summary": "CORS preflight",
+        "responses": {
+          "200": {
+            "description": "CORS preflight response",
+            "headers": {
+              "Access-Control-Allow-Origin": { "schema": { "type": "string" } },
+              "Access-Control-Allow-Methods": { "schema": { "type": "string" } },
+              "Access-Control-Allow-Headers": { "schema": { "type": "string" } }
+            },
+            "content": {}
+          }
+        },
+        "x-amazon-apigateway-integration": {
+          "type": "MOCK",
+          "requestTemplates": { "application/json": "{\"statusCode\": 200}" },
+          "responses": {
+            "default": {
+              "statusCode": "200",
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Origin": "'*'",
+                "method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS'",
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization'"
+              },
+              "responseTemplates": { "application/json": "{}" }
+            }
+          }
+        }
+      }
+    },
+    "/V1/product/analysis/invoke": {
+      "post": {
+        "summary": "Inicia el análisis de código fuente",
+        "description": "Arranca la ejecución de la Step Function. El origen es GIT (repo a clonar en ECS) o UPLOAD (artefacto ya subido a S3). `repoUrl` y `artifactPath` son mutuamente excluyentes.",
+        "operationId": "invokeAnalysisSource",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AnalysisRequest"
+              },
+              "examples": {
+                "git": {
+                  "summary": "Repositorio a clonar",
+                  "value": {
+                    "sourceType": "GIT",
+                    "repoUrl": "https://github.com/org/repo.git",
+                    "branch": "main",
+                    "projectId": "p-1"
+                  }
+                },
+                "upload": {
+                  "summary": "Artefacto subido a S3",
+                  "value": {
+                    "sourceType": "UPLOAD",
+                    "artifactPath": "s3://source-trace-uploads/uploads/p-1/2026/09/05/2b8c.../repo.zip",
+                    "artifactFormat": "zip",
+                    "projectId": "p-1"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Ejecución iniciada",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AnalysisAccepted"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Cuerpo inválido",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ValidationError"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Error interno (p. ej. `ANALYSIS_STATE_MACHINE_ARN` sin configurar)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerError"
+                }
+              }
+            }
+          }
+        },
+        "x-amazon-apigateway-integration": {
+          "type": "aws_proxy",
+          "uri": "arn:aws:apigateway:us-east-1:lambda:path/2015-03-31/functions/${lambda_arn}/invocations",
+          "httpMethod": "POST",
+          "responses": {
+            "default": {
+              "statusCode": "200"
+            }
+          },
+          "passthroughBehavior": "when_no_match",
+          "contentHandling": "CONVERT_TO_TEXT"
+        }
+      },
+      "options": {
+        "summary": "CORS preflight",
+        "responses": {
+          "200": {
+            "description": "CORS preflight response",
+            "headers": {
+              "Access-Control-Allow-Origin": { "schema": { "type": "string" } },
+              "Access-Control-Allow-Methods": { "schema": { "type": "string" } },
+              "Access-Control-Allow-Headers": { "schema": { "type": "string" } }
+            },
+            "content": {}
+          }
+        },
+        "x-amazon-apigateway-integration": {
+          "type": "MOCK",
+          "requestTemplates": { "application/json": "{\"statusCode\": 200}" },
+          "responses": {
+            "default": {
+              "statusCode": "200",
+              "responseParameters": {
+                "method.response.header.Access-Control-Allow-Origin": "'*'",
+                "method.response.header.Access-Control-Allow-Methods": "'POST,OPTIONS'",
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization'"
+              },
+              "responseTemplates": { "application/json": "{}" }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AnalysisRequest": {
+        "type": "object",
+        "description": "Origen del analisis. sourceType=GIT usa repoUrl (+ branch/commit/authTokenRef opcionales); sourceType=UPLOAD usa artifactPath (+ artifactFormat opcional). repoUrl y artifactPath son mutuamente excluyentes - lo valida la Lambda.",
+        "required": [
+          "sourceType"
+        ],
+        "properties": {
+          "sourceType": {
+            "type": "string",
+            "enum": [
+              "GIT",
+              "UPLOAD"
+            ]
+          },
+          "repoUrl": {
+            "type": "string",
+            "description": "Solo GIT. URL del repositorio a clonar (`http(s)://`, `git@`, `ssh://` o `git://`)."
+          },
+          "branch": {
+            "type": "string",
+            "description": "Solo GIT. Rama a analizar. Opcional."
+          },
+          "commit": {
+            "type": "string",
+            "description": "Solo GIT. Commit especifico. Opcional."
+          },
+          "authTokenRef": {
+            "type": "string",
+            "description": "Solo GIT. Referencia a un secreto para repos privados. Opcional."
+          },
+          "artifactPath": {
+            "type": "string",
+            "description": "Solo UPLOAD. Ruta `s3://bucket/key` devuelta por `/V1/product/analysis/uploadUrl`."
+          },
+          "artifactFormat": {
+            "type": "string",
+            "enum": [
+              "zip",
+              "tar.gz"
+            ],
+            "default": "zip",
+            "description": "Solo UPLOAD. Formato del comprimido. Opcional."
+          },
+          "projectId": {
+            "type": "string",
+            "description": "Identificador de proyecto. Opcional."
+          },
+          "callbackUrl": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL http(s) a la que notificar el resultado. Opcional."
+          }
+        }
+      },
+      "AnalysisAccepted": {
+        "type": "object",
+        "properties": {
+          "analysisId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Id del análisis; se usa como nombre de la ejecución de la Step Function."
+          },
+          "executionArn": {
+            "type": "string",
+            "example": "arn:aws:states:us-east-1:000000000000:execution:source-trace-analysis:2b8c..."
+          },
+          "startDate": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "STARTED"
+            ]
+          }
+        }
+      },
+      "UploadTicket": {
+        "type": "object",
+        "properties": {
+          "uploadId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "bucket": {
+            "type": "string"
+          },
+          "key": {
+            "type": "string",
+            "example": "uploads/p-1/2026/09/05/2b8c.../repo.zip"
+          },
+          "artifactPath": {
+            "type": "string",
+            "description": "Valor listo para enviar como `artifactPath` a `/V1/product/analysis/invoke`.",
+            "example": "s3://source-trace-uploads/uploads/p-1/2026/09/05/2b8c.../repo.zip"
+          },
+          "method": {
+            "type": "string",
+            "enum": [
+              "PUT"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "format": "uri",
+            "description": "URL prefirmada de S3."
+          },
+          "headers": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Headers obligatorios en el PUT; deben coincidir con la firma.",
+            "example": {
+              "Content-Type": "application/zip"
+            }
+          },
+          "expiresIn": {
+            "type": "integer",
+            "description": "Segundos de validez de la URL.",
+            "example": 900
+          }
+        }
+      },
+      "ValidationError": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string",
+            "example": "Invalid analysis request"
+          },
+          "errors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "ServerError": {
+        "type": "object",
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

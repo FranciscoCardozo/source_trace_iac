@@ -1,0 +1,67 @@
+name: Deploy backend_mngr + migrate
+
+# Despliega el codigo de la Lambda backend_mngr y luego dispara las
+# migraciones de esquema (Prisma) invocando la propia Lambda.
+# La Lambda ya vive en la VPC del RDS, asi que no hace falta bastion
+# ni VPC endpoints.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**"
+      - "prisma/**"
+  workflow_dispatch:
+
+permissions:
+  id-token: write      # OIDC con AWS
+  contents: read
+
+jobs:
+  deploy-and-migrate:
+    runs-on: ubuntu-latest
+    env:
+      AWS_REGION: us-east-1
+      FUNCTION_NAME: backend_mngr
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build bundle
+        run: |
+          npm ci
+          npx prisma generate
+          # Empaqueta la app + el engine de migracion de Prisma.
+          # binaryTargets en schema.prisma debe incluir "rhel-openssl-3.0.x".
+          npm run build          # debe producir dist/ con index.handler
+          cd dist && zip -r ../function.zip . && cd ..
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_BACKEND_MNGR_ROLE_ARN }}   # output: github_actions_role_arn
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Deploy code
+        run: |
+          aws lambda update-function-code \
+            --function-name "$FUNCTION_NAME" \
+            --zip-file fileb://function.zip \
+            --publish
+          aws lambda wait function-updated --function-name "$FUNCTION_NAME"
+
+      - name: Run migrations (prisma migrate deploy)
+        run: |
+          aws lambda invoke \
+            --function-name "$FUNCTION_NAME" \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{"action":"migrate"}' \
+            --log-type Tail \
+            response.json | tee invoke-meta.json
+          # Falla el job si la Lambda devolvio error de funcion.
+          if grep -q '"FunctionError"' invoke-meta.json; then
+            echo "::error::La migracion fallo"; cat response.json; exit 1
+          fi
+          cat response.json
