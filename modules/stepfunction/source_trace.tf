@@ -117,7 +117,66 @@ locals {
         }
       }
       ResultPath = "@@NULL@@"
-      Next       = local.first_step
+      Next       = "EnsureModelUp"
+    }
+
+    # --- Prende el servidor de inferencia y espera a que este servible ---
+    EnsureModelUp = {
+      Type     = "Task"
+      Resource = "arn:aws:states:::aws-sdk:ecs:updateService"
+      Parameters = {
+        Cluster      = var.ecs_cluster_arn
+        Service      = var.model_service_name
+        DesiredCount = 1
+      }
+      ResultPath = "@@NULL@@"
+      Retry = [
+        {
+          ErrorEquals     = ["States.ALL"]
+          IntervalSeconds = 10
+          MaxAttempts     = 3
+          BackoffRate     = 2.0
+        }
+      ]
+      Next = "WaitForModel"
+    }
+
+    WaitForModel = {
+      Type    = "Wait"
+      Seconds = 15
+      Next    = "CheckModel"
+    }
+
+    CheckModel = {
+      Type     = "Task"
+      Resource = "arn:aws:states:::aws-sdk:ecs:describeServices"
+      Parameters = {
+        Cluster  = var.ecs_cluster_arn
+        Services = [var.model_service_name]
+      }
+      ResultSelector = {
+        "runningCount.$" = "$.Services[0].RunningCount"
+      }
+      ResultPath = "$.model"
+      Next       = "ModelReady"
+    }
+
+    ModelReady = {
+      Type = "Choice"
+      Choices = [
+        {
+          Variable                 = "$.model.runningCount"
+          NumericGreaterThanEquals = 1
+          Next                     = "ModelWarmup"
+        }
+      ]
+      Default = "WaitForModel"
+    }
+
+    ModelWarmup = {
+      Type    = "Wait"
+      Seconds = var.model_warmup_seconds
+      Next    = local.first_step
     }
 
     MarkSucceeded = {
@@ -244,6 +303,17 @@ resource "aws_iam_role_policy" "sfn" {
         Resource = var.dynamodb_table_arn
       },
       {
+        # EnsureModelUp / CheckModel: prende el servidor de inferencia al
+        # arrancar el pipeline (el apagado por inactividad lo hace el Lambda
+        # del modulo qwen_autoscaler).
+        Sid    = "ScaleModelService"
+        Effect = "Allow"
+        Action = ["ecs:UpdateService", "ecs:DescribeServices"]
+        Resource = [
+          "arn:aws:ecs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:service/${var.ecs_cluster_name}/${var.model_service_name}"
+        ]
+      },
+      {
         Effect = "Allow"
         Action = [
           "logs:CreateLogDelivery",
@@ -283,9 +353,10 @@ resource "aws_sfn_state_machine" "analysis" {
   # "descarta el resultado, pasa el input tal cual".
   definition = replace(
     jsonencode({
-      Comment = "Source Trace - pipeline de analisis (5 pasos secuenciales en ECS)"
-      StartAt = "MarkRunning"
-      States  = local.states
+      Comment        = "Source Trace - pipeline de analisis (5 pasos secuenciales en ECS)"
+      StartAt        = "MarkRunning"
+      TimeoutSeconds = var.execution_timeout_seconds
+      States         = local.states
     }),
     "\"@@NULL@@\"",
     "null"

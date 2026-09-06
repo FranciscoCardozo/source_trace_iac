@@ -20,7 +20,9 @@
     ],
     "allowHeaders": [
       "Content-Type",
-      "Authorization"
+      "Authorization",
+      "x-job-id",
+      "x-process"
     ],
     "allowMethods": [
       "GET",
@@ -101,8 +103,8 @@
             "default": {
               "statusCode": "200",
               "responseParameters": {
-                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization'",
-                "method.response.header.Access-Control-Allow-Methods": "'GET,POST,OPTIONS'",
+                "method.response.header.Access-Control-Allow-Headers": "'Content-Type,Authorization,x-job-id,x-process'",
+                "method.response.header.Access-Control-Allow-Methods": "'GET,OPTIONS'",
                 "method.response.header.Access-Control-Allow-Origin": "'*'"
               }
             }

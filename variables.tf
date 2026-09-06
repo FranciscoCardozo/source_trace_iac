@@ -172,3 +172,9 @@ variable "app_container_name" {
   type        = string
   default     = "analysis-mngr"
 }
+
+variable "model_service_name" {
+  description = "Nombre del ECS service del servidor de inferencia (creado por el workflow del repo mngr con ese nombre)"
+  type        = string
+  default     = "qwen-inference-svc"
+}

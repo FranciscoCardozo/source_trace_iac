@@ -80,6 +80,7 @@ module "stepfunction" {
   dynamodb_table_arn  = module.dynamo.table_arn
 
   ecs_cluster_arn            = module.ecs.cluster_arn
+  ecs_cluster_name           = module.ecs.cluster_name
   ecs_task_definition_family = module.ecs.task_definition_family
   ecs_container_name         = var.app_container_name
   ecs_task_role_arn          = module.ecs.task_role_arn
@@ -87,7 +88,22 @@ module "stepfunction" {
   private_subnet_ids         = module.vpc.private_subnet_ids
   security_group_id          = module.vpc.ecs_security_group_id
 
+  # El pipeline prende qwen-inference al arrancar (EnsureModelUp).
+  model_service_name = var.model_service_name
+
   log_retention_days = var.log_retention_days
+}
+
+# --- Apagado por inactividad del servidor de inferencia --------------
+module "qwen_autoscaler" {
+  source      = "./modules/qwen_autoscaler"
+  name        = local.prefix
+  environment = var.environment
+
+  state_machine_arn  = module.stepfunction.state_machine_arn
+  ecs_cluster_arn    = module.ecs.cluster_arn
+  ecs_cluster_name   = module.ecs.cluster_name
+  model_service_name = var.model_service_name
 }
 
 # --- Lambdas -----------------------------------------------

@@ -54,6 +54,28 @@ variable "security_group_id" {
   type        = string
 }
 
+variable "model_service_name" {
+  description = "Nombre del ECS service del servidor de inferencia. El pipeline lo escala a 1 (EnsureModelUp) antes de empezar; se apaga solo por inactividad (modulo qwen_autoscaler)."
+  type        = string
+}
+
+variable "ecs_cluster_name" {
+  description = "Nombre del cluster ECS (para construir el ARN del service en la policy)"
+  type        = string
+}
+
+variable "model_warmup_seconds" {
+  description = "Espera fija tras confirmar que la task de inferencia esta RUNNING, para que llama.cpp termine de cargar el modelo"
+  type        = number
+  default     = 30
+}
+
+variable "execution_timeout_seconds" {
+  description = "Timeout total de una ejecucion del pipeline (incluye el warmup del modelo y los 5 pasos)"
+  type        = number
+  default     = 10800
+}
+
 variable "pipeline_steps" {
   description = "Pasos del analisis, en orden. Cada uno se ejecuta como una task Fargate con el env jobType = <paso>."
   type        = list(string)
