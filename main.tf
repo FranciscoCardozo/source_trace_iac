@@ -307,10 +307,14 @@ module "cloudwatch" {
   region      = var.region
   alarm_email = var.alarm_email
 
-  ecs_cluster_name = module.ecs.cluster_name
+  ecs_cluster_name   = module.ecs.cluster_name
+  model_service_name = var.model_service_name
+  repo_efs_id        = module.efs.file_system_id
+  model_efs_id       = module.efs_model.file_system_id
 
   state_machine_arn = module.stepfunction.state_machine_arn
 
-  invoker_function_name = module.lambda.invoker_function_name
-  results_function_name = module.lambda.results_function_name
+  invoker_function_name    = module.lambda.invoker_function_name
+  results_function_name    = module.lambda.results_function_name
+  scale_down_function_name = module.qwen_autoscaler.function_name
 }

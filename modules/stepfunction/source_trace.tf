@@ -57,11 +57,16 @@ locals {
             # El contenedor lee env vars discretas en SCREAMING_SNAKE_CASE.
             # JOB_TYPE elige la implementacion del paso (factory: getSource /
             # basicAnalysis / ...). SOURCE_* salen del payload del request.
+            # SOURCE_URL: el estado NormalizePayload garantiza que repoUrl y
+            # artifactPath siempre existan (string vacio si no vinieron), asi
+            # que este Format concatena el que este seteado -> la URL del repo
+            # (GIT) o el s3://... del artefacto (UPLOAD). SOURCE_TYPE dice cual es.
             Environment = [
               { Name = "JOB_TYPE", Value = step },
               { Name = "JOB_ID", "Value.$" = "$.jobId" },
               { Name = "SOURCE_TYPE", "Value.$" = "$.payload.sourceType" },
-              { Name = "SOURCE_URL", "Value.$" = "$.payload.repoUrl" },
+              { Name = "SOURCE_URL", "Value.$" = "States.Format('{}{}', $.payload.repoUrl, $.payload.artifactPath)" },
+              { Name = "ARTIFACT_FORMAT", "Value.$" = "$.payload.artifactFormat" },
               { Name = "DYNAMODB_TABLE", Value = var.dynamodb_table_name },
               { Name = "PAYLOAD", "Value.$" = "States.JsonToString($.payload)" }
             ]
@@ -176,7 +181,21 @@ locals {
     ModelWarmup = {
       Type    = "Wait"
       Seconds = var.model_warmup_seconds
-      Next    = local.first_step
+      Next    = "NormalizePayload"
+    }
+
+    # Rellena con "" los campos opcionales del payload (repoUrl para GIT,
+    # artifactPath/artifactFormat para UPLOAD, branch/commit, ...). Sin esto,
+    # los overrides que hacen "$.payload.repoUrl" fallan con States.Runtime
+    # cuando el campo no viene en el request.
+    NormalizePayload = {
+      Type = "Pass"
+      Parameters = {
+        "jobId.$"   = "$.jobId"
+        "model.$"   = "$.model"
+        "payload.$" = "States.JsonMerge(States.StringToJson('{\"repoUrl\":\"\",\"artifactPath\":\"\",\"artifactFormat\":\"\",\"branch\":\"\",\"commit\":\"\",\"projectId\":\"\",\"sourceType\":\"\"}'), $.payload, false)"
+      }
+      Next = local.first_step
     }
 
     MarkSucceeded = {
